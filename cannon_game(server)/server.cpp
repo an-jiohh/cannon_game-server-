@@ -25,19 +25,17 @@ HANDLE  mutex;
 int clientNumber = 0;
 unsigned  threadID;
 int allClientSocket[3];
-int x[3] = {};
-int y[3] = {};
 
 int num[10][10] = { NULL };
-
 
 class map {
 public:
     void create_hurdle(int y, int x);
     void print_map();
+    void moving_map();
 protected:
-private:
 };
+
 void map::create_hurdle(int y, int x) {
     num[y][x] = 5;
     num[y][x+1] = 5;
@@ -45,28 +43,96 @@ void map::create_hurdle(int y, int x) {
     num[y + 1][x + 1] = 5;
 }
 
-void map::print_map() {
-    for (int i = 0; i < 10; i++) {
+void map::print_map() { //서버에 맵을 표시한다.
+    for (int i = 0; i < 10; i++) { 
         for (int j = 0; j < 10; j++) {
-            if (num[i][j] == 0) cout << "□";
+            int temp = num[i][j] - (num[i][j] / 100) * 100;
+            if (temp / 10 == 1) cout << "▲";
+            else if (temp / 10 == 2) cout << "▼";
+            else if (temp / 10 == 3) cout << "◀";
+            else if (temp / 10 == 4) cout << "▶";
+            else if (temp == 5) cout << "■";
+            else if (temp == 6) cout << "▣";
+            else cout << "□";
         }
         cout << endl;
     }
 }
 
+void map::moving_map() {
+    int movecount = 1;
+    while (movecount <= clientNumber) {
+        int temp = 0;
+        int player = 0;
+        for (int i = 0; i < 10; i++) {
+            for (int j = 0; j < 10; j++) {
+                if (num[i][j] / 100 == movecount) {
+                    int tens_temp = (num[i][j] - (num[i][j] / 100) * 100); //tens_temp에 10 + 1의자리 대입
+                    int ones_temp = tens_temp - (tens_temp / 10) * 10; //ones_temp에 1의 자리 대입
+                    tens_temp = (tens_temp / 10) * 10; //tens_temp에 10의자리 대입
+
+                    if (ones_temp == 0) { //1의 자리가 0일 경우 이동
+                        if (tens_temp == 10) { //UP
+                            if (i != 0) {
+                                if (num[i - 1][j] == 0) {
+                                    num[i - 1][j] = num[i][j];
+                                    num[i][j] = 0;
+                                }
+                            }
+                        }
+                        else if (tens_temp == 20) { //DOWN
+                            if (i != 9) {
+                                if (num[i + 1][j] == 0) {
+                                    num[i + 1][j] = num[i][j];
+                                    num[i][j] = 0;
+                                }
+                            }
+                        }
+                        else if (tens_temp == 30) { //LEFT
+                            if (j != 0) {
+                                if (num[i][j - 1] == 0) {
+                                    num[i][j - 1] = num[i][j];
+                                    num[i][j] = 0;
+                                }
+                            }
+                        }
+                        else if (tens_temp == 40) { //RIGHT
+                            if (j != 9) {
+                                if (num[i][j + 1] == 0) {
+                                    num[i][j + 1] = num[i][j];
+                                    num[i][j] = 0;
+                                }
+                            }
+                        }
+                    }
+                    movecount++;
+                    temp++;
+                }
+            }
+        }
+        player += temp;
+        if (temp == 0)movecount++; //해당 플레이어가 없을시 패스
+    }
+}
 class THD:public map{
 public:
+    THD();
     int Soc_Ser();
+    int start_server(int playernum);
+    void join_client();
     static unsigned __stdcall receive(void* arg);
+protected:
+    SOCKET serverSocket;
 };
-int THD::Soc_Ser()
-{
-    mutex = CreateMutex(NULL, FALSE, NULL); //뮤텍스 생성
 
+THD::THD() {
+    mutex = CreateMutex(NULL, FALSE, NULL); //뮤텍스 생성
+}
+int THD::start_server(int playernum) {
     WSADATA wsadata;
     WSAStartup(MAKEWORD(2, 2), &wsadata); //서버 소켓 생성
 
-    SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     cout << "서버 소켓을 생성 했습니다." << endl;
 
     SOCKADDR_IN  serverAddress; //서버 구조체 선언
@@ -81,111 +147,95 @@ int THD::Soc_Ser()
         return 0;
     }
 
-    if (listen(serverSocket, 3) == -1) { //서버 listen(대기모드)
+    if (listen(serverSocket, playernum) == -1) { //서버 listen(대기모드)
         cout << "서버 소켓을 listen 모드로 설정하는데 실패했습니다" << endl;
         return 0;
     }
     cout << "서버가 실행 되었습니다." << endl;
-    cout << "**********전체 대화 내용***********" << endl;
+    return 1;
+}
 
-    while (clientNumber < 2) {
+void THD::join_client() {
+    SOCKADDR_IN clientAddress; //클라이언트 구조체 선언
 
-        SOCKADDR_IN clientAddress; //클라이언트 구조체 선언
+    int clientAddressSize = sizeof(clientAddress);
+    SOCKET clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddress, &clientAddressSize);
 
-        int clientAddressSize = sizeof(clientAddress);
-        SOCKET clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddress, &clientAddressSize);
+    WaitForSingleObject(mutex, INFINITE); //뮤텍스 시작
+    allClientSocket[clientNumber] = clientSocket;
+    clientNumber++;
+    ReleaseMutex(mutex); //뮤텍스 해제
 
-        WaitForSingleObject(mutex, INFINITE); //뮤텍스 시작
-        allClientSocket[clientNumber] = clientSocket;
-        clientNumber++;
-        ReleaseMutex(mutex); //뮤텍스 해제
+    char greetMessage[BUFFERSIZE]; //메시지 저장 배열 선언
+    sprintf(greetMessage, "[서버]환영합니다\n"); //메시지 전달
+    send(clientSocket, greetMessage, sizeof(greetMessage), 0);
 
-        /*클라이언트에게 전달할 환영 메시지를 저장할 배열을 선언했습니다.*/
-        char greetMessage[BUFFERSIZE]; //메시지 저장 배열 선언
-        sprintf(greetMessage, "[서버]환영합니다. 대화명을 입력해 주세요\n"); //메시지 전달
-        send(clientSocket, greetMessage, sizeof(greetMessage), 0);
+    unsigned long thread;
+    thread = _beginthreadex(NULL, 0, receive, (void*)clientSocket, 0, &threadID); //각 클라이언트부터 메시지를 받는 쓰레드 실행
+}
 
-        unsigned long thread; 
-        thread = _beginthreadex(NULL, 0, receive, (void*)clientSocket, 0, &threadID);
+int THD::Soc_Ser()
+{
+    int playernum = 0;
+    cout << "플레이할 인원을 입력해 주세요 : ";
+    cin >> playernum;
 
+    if (start_server(playernum) == 0) return 0; //서버함수(실패하면 종료)
+
+    while (clientNumber < playernum) { //플레이 인원만큼 client와 연결
+        join_client();
     }
 
-    int in = 0;
-    while (1) {
+    Sleep(100); //마지막 플레이어가 접속할때까지 Sleep
+    cout << "모든 플레이어가 접속하였습니다." << endl;
+
+    cout << "탱크의 이동속도를 입력해주세요" << endl; //탱크 이동속도 조절
+    cout << "탱크의 이동속도 : ";
+    int gamespeed;
+    cin >> gamespeed;
+
+    while (1) { //Y를 누를때 까지 대기
         cout << "Y를 누르면 게임을 시작합니다." << endl;
-        in = _getch();
+        int in = _getch();
         if (in == 89 || in == 121) break;
     }
 
-    int snum[10][10];
+    int fog = 0; //안개모드 설정
     while (1) { //맵을 브로드 캐스팅
-        WaitForSingleObject(mutex, INFINITE);
-        int movecount = 1;       
-        while (movecount <= clientNumber) {
-            int temp = 0;
-            for (int i = 0; i < 10; i++) {
-                for (int j = 0; j < 10; j++) {
-                    if (num[i][j] / 100 == movecount) { 
-                        int tens_temp = (num[i][j] - (num[i][j] / 100) * 100); //tens_temp에 10 + 1의자리 대입
-                        int ones_temp = tens_temp - (tens_temp / 10) * 10; //ones_temp에 1의 자리 대입
-                        tens_temp = (tens_temp / 10) * 10; //tens_temp에 10의자리 대입
+        WaitForSingleObject(mutex, INFINITE); //뮤텍스 잠금
 
-                        if (ones_temp == 0) {
-                            if (tens_temp == 10) { //UP
-                                if (i != 0) {
-                                    if (num[i - 1][j] == 0) {
-                                        num[i - 1][j] = num[i][j];
-                                        num[i][j] = 0;
-                                    }
-                                }
-                            }
-                            else if (tens_temp == 20) { //DOWN
-                                if (i != 9) {
-                                    if (num[i + 1][j] == 0) {
-                                        num[i + 1][j] = num[i][j];
-                                        num[i][j] = 0;
-                                    }
-                                }
-                            }
-                            else if (tens_temp == 30) { //LEFT
-                                if (j != 0) {
-                                    if (num[i][j - 1] == 0) {
-                                        num[i][j - 1] = num[i][j];
-                                        num[i][j] = 0;
-                                    }
-                                }
-                            }
-                            else if (tens_temp == 40) { //RIGHT
-                                if (j != 9) {
-                                    if (num[i][j + 1] == 0) {
-                                        num[i][j + 1] = num[i][j];
-                                        num[i][j] = 0;
-                                    }
-                                }
-                            }
-                        }
-                        movecount++;
-                        temp++;
-                    }
-                }
+        moving_map(); //맵 플레이어들의 위치를 이동시킴
+
+        if (_kbhit()) { //안개모드 번경
+            int in = _getch();
+            if (in == 77 || in == 109) {
+                if (fog == 1) fog = 0;
+                else fog = 1;
             }
-            if (temp == 0)movecount++; //해당 플레이어가 없을시 패스
         }
-        
-        for (int i = 0; i < 10; i++) {
+
+        system("cls");
+        print_map(); //서버에 맵 표시
+
+        cout << "m을 누르면 안개모드를 변경합니다. 현재모드 : ";
+        if (fog == 1) cout << "안개모드" << endl;
+        else cout << "비안개모드" << endl;
+
+        int snum[101]; //전송용 배열
+        for (int i = 0; i < 10; i++) { //빅엔디안 정렬
             for (int j = 0; j < 10; j++) {
-                snum[i][j] = htonl(num[i][j]);
-                if (num[i][j] == 7 || num[i][j] == 6) num[i][j] = 0;
+                snum[i * 10 + j] = htonl(num[i][j]);
+                if (num[i][j] == 6) num[i][j] = 0;
             }
         }
-        for (int i = 0; i < clientNumber; i++) {
+        snum[100] = htonl(fog); //배열의 마지막에 안개/비안개 모드 구별 코드입력
+
+        for (int i = 0; i < clientNumber; i++) { // 전체 플레이어에게 전송
             send(allClientSocket[i], (char*)snum, sizeof(snum), 0);
         }
-        ReleaseMutex(mutex);
-        Sleep(300);
-        
+        ReleaseMutex(mutex); //뮤텍스 해제
+        Sleep(gamespeed);
     }
-    
     return 0;
 }
 
@@ -199,16 +249,17 @@ unsigned __stdcall THD::receive(void* arg) {
     Clientnum[0] = htonl(Clientnum[0]);
     send(myClientSocket, (char*)Clientnum, sizeof(Clientnum), 0); //클라이언트 자신의 정보 전송
     Clientnum[0] = htonl(Clientnum[0]);
-    cout << Clientnum[0] << "번째 플레이어 입장" << endl;
 
     int fromClient[1]; //키보드 입력 값 저장 배열
 
     while (1) {
         int readlen = recv(myClientSocket, (char*)fromClient, sizeof(fromClient), 0); //키보드 입력 받음
+        if (readlen < 0) break; //플레이어가 나갈경우 반복문 종료
         fromClient[0] = htonl(fromClient[0]);
 
+        //키보드 입력값에 따라 쓰레드가 담당하는 플레이어의 상태값을 바꾼다.
         WaitForSingleObject(mutex, INFINITE); 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 10; i++) { 
             for (int j = 0; j < 10; j++) {
                 if (num[i][j] / 100 == Clientnum[0])
                 {
@@ -287,10 +338,24 @@ unsigned __stdcall THD::receive(void* arg) {
         }
         ReleaseMutex(mutex);
     }
+    //종료한 소켓 제거 부분
+    WaitForSingleObject(mutex, INFINITE);//뮤텍스 동기화 시작
+    int i, j;
+    for (i = 0; i < clientNumber; i++) { //제거할 소켓을 찾음
+        if (allClientSocket[i] == myClientSocket) { //제거할 소켓 일 경우
+            j = i;
+            while (j < clientNumber - 1) {
+                allClientSocket[j] = allClientSocket[j + 1];
+                j++;
+            }
+            break;
+        }
+    }
+    clientNumber--;//전체 클라이언트의 수를 1감소 시킴
+    ReleaseMutex(mutex);//뮤텍스 동기화 종료
+    closesocket(myClientSocket);//현재 클라이언트와 연결된 소켓을 종료함
     return 0;
 }
-
-
 
 int main() {
     THD cla;
@@ -305,8 +370,6 @@ int main() {
     num[0][9] = 310;
 
     cla.Soc_Ser();
-
-
 
 	return 0;
 }
