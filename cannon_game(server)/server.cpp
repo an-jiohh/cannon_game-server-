@@ -32,7 +32,7 @@ class map {
 public:
     void create_hurdle(int y, int x);  //장애물 생성 함수(2*2)형성
     void print_map(); //맵을 표시하는 함수
-    void moving_map(); //맵의 요소들의 이동 처리 함수
+    int moving_map(); //맵의 요소들의 이동 처리 함수
     virtual int main_func() = 0; //맵의 요소를 구동할 추상메소드 지정 
 };
 
@@ -59,11 +59,12 @@ void map::print_map() { //맵을 표시하는 함수
     }
 }
 
-void map::moving_map() { //맵의 요소들의 이동을 처리한다.
+int map::moving_map() { //맵의 요소들의 이동을 처리한다.
     int movecount = 1;
+    int player = 0; //마지막 플레이어의 순번을 알아낸다.
+    int playerCounter = 0; //플레이어가 몇명 남았는지 센다.
     while (movecount <= clientNumber) {
         int temp = 0;
-        int player = 0;
         for (int i = 0; i < 10; i++) {
             for (int j = 0; j < 10; j++) {
                 if (num[i][j] / 100 == movecount) {
@@ -105,14 +106,17 @@ void map::moving_map() { //맵의 요소들의 이동을 처리한다.
                             }
                         }
                     }
+                    playerCounter++;
+                    player = movecount;
                     movecount++;
                     temp++;
                 }
             }
         }
-        player += temp;
-        if (temp == 0)movecount++; //해당 플레이어가 없을시 패스
+        if (temp == 0) movecount++; //해당 플레이어가 없을시 패스
     }
+    if (playerCounter == 1) return player;
+    else return 0;
 }
 
 class THD{
@@ -151,6 +155,7 @@ int THD::start_server(int playernum) { //서버 시작 함수
         return 0;
     }
     cout << "서버가 실행 되었습니다." << endl;
+    cout << "플레이어를 기다리는 중입니다." << endl;
     return 1;
 }
 
@@ -166,7 +171,7 @@ void THD::join_client() { //클라이언트 연결 함수
     ReleaseMutex(mutex); //뮤텍스 해제
 
     char greetMessage[BUFFERSIZE]; //메시지 저장 배열 선언
-    sprintf(greetMessage, "[서버]환영합니다\n"); //메시지 전달
+    sprintf(greetMessage, "[서버]환영합니다/다른 플레이어를 기다리는 중입니다.\n"); //메시지 전달
     send(clientSocket, greetMessage, sizeof(greetMessage), 0);
 
     unsigned long thread;
@@ -294,12 +299,13 @@ unsigned __stdcall THD::receive(void* arg) {
 class main_CLA :public map, THD {
 public:
     main_CLA();
-    int main_func();
+    ~main_CLA();
+    int main_func(); //상속 항목 실행 매소드
 protected:
 private:
 };
 
-main_CLA::main_CLA() {
+main_CLA::main_CLA() { //장애물, 플레이어의 시작위치 지정
     create_hurdle(3, 3);
     create_hurdle(2, 6);
     create_hurdle(6, 1);
@@ -308,6 +314,13 @@ main_CLA::main_CLA() {
     num[0][0] = 120;
     num[9][0] = 230;
     num[0][9] = 310;
+}
+
+main_CLA::~main_CLA() { //main_CLA()종료시 모든 소켓을 삭제
+    cout << "서버를 종료합니다." << endl;
+    for (int i = 0; i < clientNumber; i++) {
+        closesocket(allClientSocket[i]);
+    }
 }
 
 int main_CLA::main_func() {
@@ -319,7 +332,6 @@ int main_CLA::main_func() {
 
     while (clientNumber < playernum) { //플레이 인원만큼 client와 연결
         join_client();
-
     }
 
     Sleep(100); //마지막 플레이어가 접속할때까지 Sleep
@@ -337,10 +349,11 @@ int main_CLA::main_func() {
     }
 
     int fog = 0; //안개모드 설정
-    while (1) { //맵을 브로드 캐스팅
+    int counter; //우승자 저장
+    while (1) { //맵을 브로드 캐스팅(게임 시작)
         WaitForSingleObject(mutex, INFINITE); //뮤텍스 잠금
 
-        moving_map(); //맵 플레이어들의 위치를 이동시킴
+        counter = moving_map(); //맵 플레이어들의 위치를 이동시킴(반환값 : 정상(0),한명남음(플레이어번호))
 
         if (_kbhit()) { //안개모드 번경
             int in = _getch();
@@ -371,7 +384,9 @@ int main_CLA::main_func() {
         }
         ReleaseMutex(mutex); //뮤텍스 해제
         Sleep(gamespeed);
+        if (counter != 0) break;
     }
+    cout << counter << "번째 플레이어가 우승하였습니다." << endl;
     return 0;
 }
 
